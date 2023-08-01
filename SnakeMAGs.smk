@@ -172,12 +172,16 @@ if HOST_GENOME == "yes":
             samtools sort -n {wildcards.smp}/QC_fq/host_filtering/bothEndsUnmapped.bam --threads {threads}  > {output.bam}) 2> {log}
             """
 
+    fq1 = "{smp}/QC_fq/host_filtering/{smp}_host_removed_R1.fastq"
+
+    fq2 = "{smp}/QC_fq/host_filtering/{smp}_host_removed_R2.fastq"
+
     rule host_reads_removal:
         input:
             bam="{smp}/QC_fq/host_filtering/{smp}_bothEndsUnmapped_sorted.bam",
         output:
-            fq1="{smp}/QC_fq/host_filtering/{smp}_host_removed_R1.fastq",
-            fq2="{smp}/QC_fq/host_filtering/{smp}_host_removed_R2.fastq",
+            fq1=fq1,
+            fq2=fq2,
         conda:
             config["conda_env"] + "BEDTOOLS.yaml"
         benchmark:
@@ -191,110 +195,83 @@ if HOST_GENOME == "yes":
             (bedtools bamtofastq -i {input.bam} -fq {output.fq1} -fq2 {output.fq2}) 2> {log}
             """
 
-    rule assembly_reads:
-        input:
-            fq1="{smp}/QC_fq/host_filtering/{smp}_host_removed_R1.fastq",
-            fq2="{smp}/QC_fq/host_filtering/{smp}_host_removed_R2.fastq",
-        output:
-            "{smp}/Assembly/{smp}.contigs.fa",
-        conda:
-            config["conda_env"] + "MEGAHIT.yaml"
-        benchmark:
-            "{smp}/benchmarks/assembly_reads.benchmark.txt"
-        threads: config["threads_megahit"]
-        resources:
-            mem=config["resources_megahit"],
-        params:
-            min_contig_len=config["min_contig_len"],
-            k_list=config["k_list"],
-            wdir=config["working_dir"],
-        log:
-            "{smp}/logs/assembly_reads.log",
-        shell:
-            """
-            (mkdir -p {wildcards.smp}/Assembly/
-            megahit -1 {input.fq1} -2 {input.fq2} --memory 0.95  --num-cpu-threads {threads} --out-dir {wildcards.smp}/Assembly/megahit_out --out-prefix {wildcards.smp} --min-contig-len {params.min_contig_len} --k-list {params.k_list}
-            ln -s {params.wdir}{wildcards.smp}/Assembly/megahit_out/{wildcards.smp}.contigs.fa {wildcards.smp}/Assembly/{wildcards.smp}.contigs.fa) 2> {log}
-            """
-
-    rule depth_file_first_step:
-        input:
-            contigs="{smp}/Assembly/{smp}.contigs.fa",
-            clean_R1="{smp}/QC_fq/host_filtering/{smp}_host_removed_R1.fastq",
-            clean_R2="{smp}/QC_fq/host_filtering/{smp}_host_removed_R2.fastq",
-        output:
-            sam="{smp}/Binning/{smp}.contigs.sam",
-        conda:
-            config["conda_env"] + "BWA.yaml"
-        benchmark:
-            "{smp}/benchmarks/depth_file_first_step.benchmark.txt"
-        threads: config["threads_bwa"]
-        resources:
-            mem=config["resources_bwa"],
-        params:
-            wdir=config["working_dir"],
-        log:
-            "{smp}/logs/depth_file_first_step.log",
-        shell:
-            """
-                    (mkdir -p {wildcards.smp}/Binning
-            ln -sf {params.wdir}/{input.contigs} {wildcards.smp}/Binning/{wildcards.smp}.contigs.fa
-                    bwa index {wildcards.smp}/Binning/{wildcards.smp}.contigs.fa
-                    bwa mem -t {threads} {wildcards.smp}/Binning/{wildcards.smp}.contigs.fa {input.clean_R1} {input.clean_R2} > {output.sam}) 2> {log}
-                    """
-
 else:
+    fq1 = "{smp}/QC_fq/adapter_trimming/{smp}_1.trimmed.fastq"
 
-    rule assembly:
-        input:
-            fq1="{smp}/QC_fq/adapter_trimming/{smp}_1.trimmed.fastq",
-            fq2="{smp}/QC_fq/adapter_trimming/{smp}_2.trimmed.fastq",
-        output:
-            "{smp}/Assembly/{smp}.contigs.fa",
-        conda:
-            config["conda_env"] + "MEGAHIT.yaml"
-        benchmark:
-            "{smp}/benchmarks/assembly_reads.benchmark.txt"
-        threads: config["threads_megahit"]
-        resources:
-            mem=config["resources_megahit"],
-        params:
-            min_contig_len=config["min_contig_len"],
-            k_list=config["k_list"],
-        log:
-            "{smp}/logs/assembly_reads.log",
-        shell:
-            """
-            (mkdir -p {wildcards.smp}/Assembly/
-                        megahit -1 {input.fq1} -2 {input.fq2} --memory 0.95  --num-cpu-threads {threads} --out-dir {wildcards.smp}/Assembly/megahit_out --out-prefix {wildcards.smp} --min-contig-len {params.min_contig_len} --k-list {params.k_list}
-                        ln -s {params.wdir}{wildcards.smp}/Assembly/megahit_out/{wildcards.smp}.contigs.fa {wildcards.smp}/Assembly/{wildcards.smp}.contigs.fa) 2> {log}
-            """
+    fq2 = "{smp}/QC_fq/adapter_trimming/{smp}_2.trimmed.fastq"
 
-    rule depth_file_first_step:
-        input:
-            contigs="{smp}/Assembly/{smp}.contigs.fa",
-            clean_R1="{smp}/QC_fq/adapter_trimming/{smp}_1.trimmed.fastq",
-            clean_R2="{smp}/QC_fq/adapter_trimming/{smp}_2.trimmed.fastq",
-        output:
-            sam="{smp}/Binning/{smp}.contigs.sam",
-        conda:
-            config["conda_env"] + "BWA.yaml"
-        benchmark:
-            "{smp}/benchmarks/depth_file_first_step.benchmark.txt"
-        threads: config["threads_bwa"]
-        resources:
-            mem=config["resources_bwa"],
-        params:
-            wdir=config["working_dir"],
-        log:
-            "{smp}/logs/depth_file_first_step.log",
-        shell:
-            """
-            (mkdir -p {wildcards.smp}/Binning
-            ln -sf {params.wdir}/{input.contigs} {wildcards.smp}/Binning/{wildcards.smp}.contigs.fa
+
+rule assembly:
+    input:
+        fq1=fq1,
+        fq2=fq2,
+    output:
+        "{smp}/Assembly/{smp}.contigs.fa",
+    conda:
+        config["conda_env"] + "MEGAHIT.yaml"
+    benchmark:
+        "{smp}/benchmarks/assembly_reads.benchmark.txt"
+    threads: config["threads_megahit"]
+    resources:
+        mem=config["resources_megahit"],
+    params:
+        min_contig_len=config["min_contig_len"],
+        k_list=config["k_list"],
+        wdir=config["working_dir"],
+    log:
+        "{smp}/logs/assembly_reads.log",
+    shell:
+        """
+        (
+            mkdir -p {wildcards.smp}/Assembly/
+            megahit \
+                -1 {input.fq1} -2 {input.fq2} \
+                --memory 0.95 \
+                --num-cpu-threads {threads} \
+                --out-dir {wildcards.smp}/Assembly/megahit_out \
+                --out-prefix {wildcards.smp} \
+                --min-contig-len {params.min_contig_len} \
+                --k-list {params.k_list}
+            ln -s \
+                {params.wdir}{wildcards.smp}/Assembly/megahit_out/{wildcards.smp}.contigs.fa \
+                {wildcards.smp}/Assembly/{wildcards.smp}.contigs.fa
+        ) 2> {log}
+        """
+
+
+rule depth_file_first_step:
+    input:
+        contigs="{smp}/Assembly/{smp}.contigs.fa",
+        clean_R1=fq1,
+        clean_R2=fq2,
+    output:
+        sam="{smp}/Binning/{smp}.contigs.sam",
+    conda:
+        config["conda_env"] + "BWA.yaml"
+    benchmark:
+        "{smp}/benchmarks/depth_file_first_step.benchmark.txt"
+    threads: config["threads_bwa"]
+    resources:
+        mem=config["resources_bwa"],
+    params:
+        wdir=config["working_dir"],
+    log:
+        "{smp}/logs/depth_file_first_step.log",
+    shell:
+        """
+        (
+            mkdir -p {wildcards.smp}/Binning
+            ln -sf \
+                {params.wdir}/{input.contigs} \
+                {wildcards.smp}/Binning/{wildcards.smp}.contigs.fa
             bwa index {wildcards.smp}/Binning/{wildcards.smp}.contigs.fa
-            bwa mem -t {threads} {wildcards.smp}/Binning/{wildcards.smp}.contigs.fa {input.clean_R1} {input.clean_R2} > {output.sam}) 2> {log}
-            """
+            bwa mem \
+                -t {threads} \
+                {wildcards.smp}/Binning/{wildcards.smp}.contigs.fa \
+                {input.clean_R1} {input.clean_R2} \
+            > {output.sam}
+        ) 2> {log}
+        """
 
 
 rule depth_file_second_step:
@@ -470,54 +447,31 @@ rule classification:
         """
 
 
-if HOST_GENOME == "yes":
-
-    rule MAGs_abundances:
-        input:
-            final="{smp}/Bins_quality/{smp}_gunc.final",
-            fq1="{smp}/QC_fq/host_filtering/{smp}_host_removed_R1.fastq",
-            fq2="{smp}/QC_fq/host_filtering/{smp}_host_removed_R2.fastq",
-        output:
-            "{smp}/MAGs_abundances/{smp}_coverage.tsv",
-        conda:
-            config["conda_env"] + "COVERM.yaml"
-        benchmark:
-            "{smp}/benchmarks/abundances.benchmark.txt"
-        params:
-            wdir=config["working_dir"],
-        threads: config["threads_coverM"]
-        resources:
-            mem=config["resources_coverM"],
-        log:
-            "{smp}/logs/abundances.log",
-        shell:
-            """
-            (mkdir -p {wildcards.smp}/MAGs_abundances/
-            coverm genome --coupled {input.fq1} {input.fq2} --genome-fasta-files {wildcards.smp}/Bins_quality/MAGs/*.fa -o {output} --threads {threads}) 2> {log}
-            """
-
-else:
-
-    rule MAGs_abundances:
-        input:
-            final="{smp}/Bins_quality/{smp}_gunc.final",
-            fq1="{smp}/QC_fq/adapter_trimming/{smp}_1.trimmed.fastq",
-            fq2="{smp}/QC_fq/adapter_trimming/{smp}_2.trimmed.fastq",
-        output:
-            "{smp}/MAGs_abundances/{smp}_coverage.tsv",
-        conda:
-            config["conda_env"] + "COVERM.yaml"
-        benchmark:
-            "{smp}/benchmarks/abundances.benchmark.txt"
-        params:
-            wdir=config["working_dir"],
-        threads: config["threads_coverM"]
-        resources:
-            mem=config["resources_coverM"],
-        log:
-            "{smp}/logs/abundances.log",
-        shell:
-            """
-            (mkdir -p {wildcards.smp}/MAGs_abundances/
-            coverm genome --coupled {input.fq1} {input.fq2} --genome-fasta-files {wildcards.smp}/Bins_quality/MAGs/*.fa -o {output} --threads {threads}) 2> {log}
-            """
+rule MAGs_abundances:
+    input:
+        final="{smp}/Bins_quality/{smp}_gunc.final",
+        fq1=fq1,
+        fq2=fq2,
+    output:
+        "{smp}/MAGs_abundances/{smp}_coverage.tsv",
+    conda:
+        config["conda_env"] + "COVERM.yaml"
+    benchmark:
+        "{smp}/benchmarks/abundances.benchmark.txt"
+    params:
+        wdir=config["working_dir"],
+    threads: config["threads_coverM"]
+    resources:
+        mem=config["resources_coverM"],
+    log:
+        "{smp}/logs/abundances.log",
+    shell:
+        """
+        (
+            mkdir -p {wildcards.smp}/MAGs_abundances/
+            coverm genome \
+                --coupled {input.fq1} {input.fq2} \
+                --genome-fasta-files {wildcards.smp}/Bins_quality/MAGs/*.fa \
+                -o {output} --threads {threads}
+        ) 2> {log}
+        """
