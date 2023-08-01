@@ -39,6 +39,7 @@ READS1 = FASTQ_DIR + "{smp}" + SFX_1
 READS2 = FASTQ_DIR + "{smp}" + SFX_2
 
 
+# region trim
 rule quality_filtering:
     input:
         fwd=READS1,
@@ -60,10 +61,18 @@ rule quality_filtering:
         "{smp}/logs/quality_filtering.log",
     shell:
         """
-        (mkdir -p {wildcards.smp}/QC_fq/quality_filtering/
-        echo -e sample"\t"r1"\t"r2"\n"{wildcards.smp}"\t"{input.fwd}"\t"{input.rev} > {wildcards.smp}/QC_fq/quality_filtering/{wildcards.smp}_samples.txt
-        iu-gen-configs {wildcards.smp}/QC_fq/quality_filtering/{wildcards.smp}_samples.txt --e-mail {params.email} -o {wildcards.smp}/QC_fq/quality_filtering/
-        iu-filter-quality-minoche {wildcards.smp}/QC_fq/quality_filtering/{wildcards.smp}.ini --ignore-deflines) 2> {log}
+        (
+            mkdir -p {wildcards.smp}/QC_fq/quality_filtering/
+            echo -e sample"\t"r1"\t"r2"\n"{wildcards.smp}"\t"{input.fwd}"\t"{input.rev} \
+            > {wildcards.smp}/QC_fq/quality_filtering/{wildcards.smp}_samples.txt
+            iu-gen-configs \
+                {wildcards.smp}/QC_fq/quality_filtering/{wildcards.smp}_samples.txt \
+                --e-mail {params.email} \
+                -o {wildcards.smp}/QC_fq/quality_filtering/
+            iu-filter-quality-minoche \
+                {wildcards.smp}/QC_fq/quality_filtering/{wildcards.smp}.ini \
+                --ignore-deflines
+        ) 2> {log}
         """
 
 
@@ -91,114 +100,148 @@ rule adapter_trimming:
         "{smp}/logs/adapter_trimming.log",
     shell:
         """
-                (mkdir -p {wildcards.smp}/QC_fq/adapter_trimming
-                trimmomatic PE -threads {threads} -summary {wildcards.smp}/QC_fq/adapter_trimming/{wildcards.smp}-STATS.txt -trimlog {wildcards.smp}/QC_fq/adapter_trimming/{wildcards.smp}-log.txt {input.quality_passed_R1} {input.quality_passed_R2} {output.trimmed_1} {output.un_trimmed_1} {output.trimmed_2} {output.un_trimmed_2} ILLUMINACLIP:{params.adapters}:{params.trim_params}) 2> {log}
-                """
+        (
+            mkdir -p {wildcards.smp}/QC_fq/adapter_trimming
+            trimmomatic PE \
+                -threads {threads} \
+                -summary {wildcards.smp}/QC_fq/adapter_trimming/{wildcards.smp}-STATS.txt \
+                -trimlog {wildcards.smp}/QC_fq/adapter_trimming/{wildcards.smp}-log.txt \
+                {input.quality_passed_R1} {input.quality_passed_R2} \
+                {output.trimmed_1} {output.un_trimmed_1} {output.trimmed_2} {output.un_trimmed_2} \
+                ILLUMINACLIP:{params.adapters}:{params.trim_params}
+        ) 2> {log}
+        """
 
 
+# endregion trim
+
+
+# region host
 if HOST_GENOME == "yes":
-
-    rule host_genomes_indexing:
-        input:
-            host_genomes=config["host_genomes"],
-        output:
-            config["host_genomes_directory"] + "host_genomes_indexing.final",
-        conda:
-            config["conda_env"] + "BOWTIE2.yaml"
-        benchmark:
-            (
-                config["host_genomes_directory"]
-                + "benchmarks/host_reads_mapping.benchmark.txt"
-            )
-        params:
-            wdir=config["working_dir"],
-            host_genomes=config["host_genomes"],
-            host_genomes_directory=config["host_genomes_directory"],
-        threads: config["threads_bowtie2"]
-        resources:
-            mem=config["resources_host_filtering"],
-        log:
-            config["host_genomes_directory"] + "/logs/host_reads_mapping.log",
-        shell:
-            """
-            (bowtie2-build --threads {threads} {input} {params.host_genomes_directory}/host_DB
-            touch {output}) 2> {log}
-                        """
-
-    rule host_reads_mapping:
-        input:
-            trimmed_1="{smp}/QC_fq/adapter_trimming/{smp}_1.trimmed.fastq",
-            trimmed_2="{smp}/QC_fq/adapter_trimming/{smp}_2.trimmed.fastq",
-            index_final=config["host_genomes_directory"] + "host_genomes_indexing.final",
-        output:
-            sam="{smp}/QC_fq/host_filtering/{smp}_all.sam",
-        conda:
-            config["conda_env"] + "BOWTIE2.yaml"
-        benchmark:
-            "{smp}/benchmarks/host_reads_mapping.benchmark.txt"
-        params:
-            wdir=config["working_dir"],
-            host_genomes=config["host_genomes"],
-            host_genomes_directory=config["host_genomes_directory"],
-        threads: config["threads_bowtie2"]
-        resources:
-            mem=config["resources_host_filtering"],
-        log:
-            "{smp}/logs/host_reads_mapping.log",
-        shell:
-            """
-            (mkdir -p {wildcards.smp}/QC_fq/host_filtering
-            bowtie2 -x {params.host_genomes_directory}/host_DB -1 {input.trimmed_1} -2 {input.trimmed_2} --un-conc {wildcards.smp}/QC_fq/host_filtering/unmapped.fq --al-conc {wildcards.smp}/QC_fq/host_filtering/mapped.fq -S {output.sam} --threads {threads}) 2> {log}
-            """
-
-    rule sam2bam:
-        input:
-            sam="{smp}/QC_fq/host_filtering/{smp}_all.sam",
-        output:
-            bam="{smp}/QC_fq/host_filtering/{smp}_bothEndsUnmapped_sorted.bam",
-        conda:
-            config["conda_env"] + "SAMTOOLS.yaml"
-        benchmark:
-            "{smp}/benchmarks/sam2bam.benchmark.txt"
-        threads: config["threads_samtools"]
-        resources:
-            mem=config["resources_host_filtering"],
-        log:
-            "{smp}/logs/sam2bam.log",
-        shell:
-            """
-            (samtools view -@ 100 -bS {input.sam} > {wildcards.smp}/QC_fq/host_filtering/all.bam
-            samtools view -b -@ 100 -f 12 -F 256 {wildcards.smp}/QC_fq/host_filtering/all.bam > {wildcards.smp}/QC_fq/host_filtering/bothEndsUnmapped.bam
-            samtools sort -n {wildcards.smp}/QC_fq/host_filtering/bothEndsUnmapped.bam --threads {threads}  > {output.bam}) 2> {log}
-            """
-
     fq1 = "{smp}/QC_fq/host_filtering/{smp}_host_removed_R1.fastq"
-
     fq2 = "{smp}/QC_fq/host_filtering/{smp}_host_removed_R2.fastq"
-
-    rule host_reads_removal:
-        input:
-            bam="{smp}/QC_fq/host_filtering/{smp}_bothEndsUnmapped_sorted.bam",
-        output:
-            fq1=fq1,
-            fq2=fq2,
-        conda:
-            config["conda_env"] + "BEDTOOLS.yaml"
-        benchmark:
-            "{smp}/benchmarks/host_reads_removing.benchmark.txt"
-        resources:
-            mem=config["resources_host_filtering"],
-        log:
-            "{smp}/logs/host_reads_removing.log",
-        shell:
-            """
-            (bedtools bamtofastq -i {input.bam} -fq {output.fq1} -fq2 {output.fq2}) 2> {log}
-            """
-
 else:
     fq1 = "{smp}/QC_fq/adapter_trimming/{smp}_1.trimmed.fastq"
-
     fq2 = "{smp}/QC_fq/adapter_trimming/{smp}_2.trimmed.fastq"
+
+
+rule host_genomes_indexing:
+    input:
+        host_genomes=config["host_genomes"],
+    output:
+        config["host_genomes_directory"] + "host_genomes_indexing.final",
+    conda:
+        config["conda_env"] + "BOWTIE2.yaml"
+    benchmark:
+        (
+            config["host_genomes_directory"]
+            + "benchmarks/host_reads_mapping.benchmark.txt"
+        )
+    params:
+        wdir=config["working_dir"],
+        host_genomes=config["host_genomes"],
+        host_genomes_directory=config["host_genomes_directory"],
+    threads: config["threads_bowtie2"]
+    resources:
+        mem=config["resources_host_filtering"],
+    log:
+        config["host_genomes_directory"] + "/logs/host_reads_mapping.log",
+    shell:
+        """
+        (
+            bowtie2-build --threads {threads} {input} {params.host_genomes_directory}/host_DB
+            touch {output}
+        ) 2> {log}
+                    """
+
+
+rule host_reads_mapping:
+    input:
+        trimmed_1="{smp}/QC_fq/adapter_trimming/{smp}_1.trimmed.fastq",
+        trimmed_2="{smp}/QC_fq/adapter_trimming/{smp}_2.trimmed.fastq",
+        index_final=config["host_genomes_directory"] + "host_genomes_indexing.final",
+    output:
+        sam="{smp}/QC_fq/host_filtering/{smp}_all.sam",
+    conda:
+        config["conda_env"] + "BOWTIE2.yaml"
+    benchmark:
+        "{smp}/benchmarks/host_reads_mapping.benchmark.txt"
+    params:
+        wdir=config["working_dir"],
+        host_genomes=config["host_genomes"],
+        host_genomes_directory=config["host_genomes_directory"],
+    threads: config["threads_bowtie2"]
+    resources:
+        mem=config["resources_host_filtering"],
+    log:
+        "{smp}/logs/host_reads_mapping.log",
+    shell:
+        """
+        (
+            mkdir -p {wildcards.smp}/QC_fq/host_filtering
+            bowtie2 \
+                -x {params.host_genomes_directory}/host_DB  \
+                -1 {input.trimmed_1} -2 {input.trimmed_2}  \
+                --un-conc {wildcards.smp}/QC_fq/host_filtering/unmapped.fq  \
+                --al-conc {wildcards.smp}/QC_fq/host_filtering/mapped.fq  \
+                -S {output.sam}  \
+                --threads {threads}
+        ) 2> {log}
+        """
+
+
+rule sam2bam:
+    input:
+        sam="{smp}/QC_fq/host_filtering/{smp}_all.sam",
+    output:
+        bam="{smp}/QC_fq/host_filtering/{smp}_bothEndsUnmapped_sorted.bam",
+    conda:
+        config["conda_env"] + "SAMTOOLS.yaml"
+    benchmark:
+        "{smp}/benchmarks/sam2bam.benchmark.txt"
+    threads: config["threads_samtools"]
+    resources:
+        mem=config["resources_host_filtering"],
+    log:
+        "{smp}/logs/sam2bam.log",
+    shell:
+        """
+        (
+            samtools view -@ {threads} -bS {input.sam}  \
+            > {wildcards.smp}/QC_fq/host_filtering/all.bam
+            samtools view -b -@ {threads} -f 12 -F 256 {wildcards.smp}/QC_fq/host_filtering/all.bam  \
+            > {wildcards.smp}/QC_fq/host_filtering/bothEndsUnmapped.bam
+            samtools sort  \
+                -n {wildcards.smp}/QC_fq/host_filtering/bothEndsUnmapped.bam  \
+                --threads {threads}  \
+            > {output.bam}
+        ) 2> {log}
+        """
+
+
+rule host_reads_removal:
+    input:
+        bam="{smp}/QC_fq/host_filtering/{smp}_bothEndsUnmapped_sorted.bam",
+    output:
+        fq1=fq1,
+        fq2=fq2,
+    conda:
+        config["conda_env"] + "BEDTOOLS.yaml"
+    benchmark:
+        "{smp}/benchmarks/host_reads_removing.benchmark.txt"
+    resources:
+        mem=config["resources_host_filtering"],
+    log:
+        "{smp}/logs/host_reads_removing.log",
+    shell:
+        """
+        (
+            bedtools bamtofastq -i {input.bam} -fq {output.fq1} -fq2 {output.fq2}
+        ) 2> {log}
+        """
+
+
+# endregion host
 
 
 rule assembly:
@@ -290,8 +333,10 @@ rule depth_file_second_step:
         "{smp}/logs/depth_file_second_step.log",
     shell:
         """
-        (samtools view -b -@ {threads} {input.sam} -o {wildcards.smp}/Binning/{wildcards.smp}.contigs.bam
-        samtools sort -@ {threads} {wildcards.smp}/Binning/{wildcards.smp}.contigs.bam -o {output.bam}) 2> {log}
+        (
+            samtools view -b -@ {threads} {input.sam} -o {wildcards.smp}/Binning/{wildcards.smp}.contigs.bam
+            samtools sort -@ {threads} {wildcards.smp}/Binning/{wildcards.smp}.contigs.bam -o {output.bam}
+        ) 2> {log}
         """
 
 
@@ -310,7 +355,9 @@ rule depth_file:
         "{smp}/logs/depth_file.log",
     shell:
         """
-        (jgi_summarize_bam_contig_depths --outputDepth {output.depth} {input.bam}) 2> {log}
+        (
+            jgi_summarize_bam_contig_depths --outputDepth {output.depth} {input.bam}
+        ) 2> {log}
         """
 
 
@@ -334,10 +381,16 @@ rule binning:
         "{smp}/logs/binning.log",
     shell:
         """
-                (mkdir -p {wildcards.smp}/Binning/bins
-                metabat2 -i {input.contigs}  -a {input.depth} -o {wildcards.smp}/Binning/bins/bin --minContig {params.minContig} --numThreads {threads} --seed {params.seed} -v
-                touch {wildcards.smp}/Binning/{wildcards.smp}_binning.final) 2> {log}
-                """
+        (
+            mkdir -p {wildcards.smp}/Binning/bins
+            metabat2 \
+                -i {input.contigs} \
+                -a {input.depth} \
+                -o {wildcards.smp}/Binning/bins/bin \
+                --minContig {params.minContig} --numThreads {threads} --seed {params.seed} -v
+            touch {output}
+        ) 2> {log}
+        """
 
 
 rule bins_quality_checkM:
@@ -356,10 +409,22 @@ rule bins_quality_checkM:
         "{smp}/logs/checkm.log",
     shell:
         """
-        (mkdir -p {wildcards.smp}/Bins_quality/
-        checkm lineage_wf -f {wildcards.smp}/Bins_quality/CheckM.txt -t {threads} -x fa {wildcards.smp}/Binning/bins/ {wildcards.smp}/Bins_quality
-        checkm qa {wildcards.smp}/Bins_quality/lineage.ms {wildcards.smp}/Bins_quality/ --threads {threads} --out_format 2 --tab_table --file {wildcards.smp}/Bins_quality/quality_summary
-        touch {wildcards.smp}/Bins_quality/{wildcards.smp}_checkM.final) 2> {log}
+        (
+            mkdir -p {wildcards.smp}/Bins_quality/
+            checkm lineage_wf \
+                -f {wildcards.smp}/Bins_quality/CheckM.txt \
+                -t {threads} \
+                -x fa \
+                {wildcards.smp}/Binning/bins/ \
+                {wildcards.smp}/Bins_quality
+            checkm qa \
+                {wildcards.smp}/Bins_quality/lineage.ms \
+                {wildcards.smp}/Bins_quality/ \
+                --threads {threads} \
+                --out_format 2 --tab_table \
+                --file {wildcards.smp}/Bins_quality/quality_summary
+            touch {output}
+        ) 2> {log}
         """
 
 
@@ -371,55 +436,79 @@ rule bins_quality_filtering:
     benchmark:
         "{smp}/benchmarks/bins_filtering.benchmark.txt"
     params:
-        completion=config["completion"],
-        contamination=config["contamination"],
-        PARKS_SCORE=config["parks_quality_score"],
+        quality_filter="($13-(5*$14))>=50"
+        if config["parks_quality_score"] == "yes"
+        else f'$13>={config["completion"]} && $14<={config["parks_quality_score"]}',
     log:
         "{smp}/logs/bins_filtering.log",
     shell:
         """
         mkdir -p {wildcards.smp}/Bins_quality/MAGs_checkM
-        if [ {params.PARKS_SCORE} == 'yes' ]
-        then
-            awk 'BEGIN {{FS=" "}} {{if (($13-(5*$14))>=50) {{system("cp {wildcards.smp}/Binning/bins/"$1".fa {wildcards.smp}/Bins_quality/MAGs_checkM/"$1".fa")}}}}' {wildcards.smp}/Bins_quality/CheckM.txt
-            touch {wildcards.smp}/Bins_quality/{wildcards.smp}_bins_filtering.final
-        else
-            awk 'BEGIN {{FS=" "}} {{if ($13>={params.completion} && $14<={params.contamination}) {{system("cp {wildcards.smp}/Binning/bins/"$1".fa {wildcards.smp}/Bins_quality/MAGs_checkM/"$1".fa")}}}}' {wildcards.smp}/Bins_quality/CheckM.txt
-            touch {wildcards.smp}/Bins_quality/{wildcards.smp}_bins_filtering.final
-        fi
+        awk 'BEGIN {{FS=" "}} {{
+            if ({quality_filter}) {{
+                system(
+                    "cp {wildcards.smp}/Binning/bins/"$1".fa {wildcards.smp}/Bins_quality/MAGs_checkM/"$1".fa"
+                )
+            }}
+        }}' {wildcards.smp}/Bins_quality/CheckM.txt
+        touch {output}
         """
 
 
-rule bins_quality_gunc:
-    input:
-        "{smp}/Bins_quality/{smp}_bins_filtering.final",
-    output:
-        "{smp}/Bins_quality/{smp}_gunc.final",
-    conda:
-        config["conda_env"] + "GUNC.yaml"
-    benchmark:
-        "{smp}/benchmarks/GUNC.benchmark.txt"
-    params:
-        GUNC_DB=config["GUNC_db"],
-        GUNC=config["gunc"],
-    threads: config["threads_gunc"]
-    resources:
-        mem=config["resources_gunc"],
-    log:
-        "{smp}/logs/gunc.log",
-    shell:
-        """
-        if [ {params.GUNC} == 'yes' ]
-        then
-            (mkdir -p {wildcards.smp}/Bins_quality/gunc_output {wildcards.smp}/Bins_quality/MAGs
-            gunc run --db_file {params.GUNC_DB} --input_dir {wildcards.smp}/Bins_quality/MAGs_checkM --threads {threads} --out_dir {wildcards.smp}/Bins_quality/gunc_output
-            awk 'BEGIN {{FS=" "}} {{if ($13=="True") {{system("cp {wildcards.smp}/Bins_quality/MAGs_checkM/"$1".fa {wildcards.smp}/Bins_quality/MAGs/"$1".fa")}}}}' {wildcards.smp}/Bins_quality/gunc_output/GUNC.progenomes_2.1.maxCSS_level.tsv
-            touch {wildcards.smp}/Bins_quality/{wildcards.smp}_gunc.final) 2> {log}
-        else
+if config["gunc"]:
+
+    rule bins_quality_gunc:
+        input:
+            "{smp}/Bins_quality/{smp}_bins_filtering.final",
+        output:
+            "{smp}/Bins_quality/{smp}_gunc.final",
+        conda:
+            config["conda_env"] + "GUNC.yaml"
+        benchmark:
+            "{smp}/benchmarks/GUNC.benchmark.txt"
+        params:
+            GUNC_DB=config["GUNC_db"],
+        threads: config["threads_gunc"]
+        resources:
+            mem=config["resources_gunc"],
+        log:
+            "{smp}/logs/gunc.log",
+        shell:
+            """
+            (
+                mkdir -p {wildcards.smp}/Bins_quality/gunc_output {wildcards.smp}/Bins_quality/MAGs
+                gunc run \
+                    --db_file {params.GUNC_DB} \
+                    --input_dir {wildcards.smp}/Bins_quality/MAGs_checkM \
+                    --threads {threads} \
+                    --out_dir {wildcards.smp}/Bins_quality/gunc_output
+                awk 'BEGIN {{FS=" "}} {{
+                    if ($13=="True") {{
+                        system(
+                            "cp {wildcards.smp}/Bins_quality/MAGs_checkM/"$1".fa {wildcards.smp}/Bins_quality/MAGs/"$1".fa"
+                        )
+                    }}
+                }}' {wildcards.smp}/Bins_quality/gunc_output/GUNC.progenomes_2.1.maxCSS_level.tsv
+                touch {output}
+            ) 2> {log}
+            """
+
+else:
+
+    rule bins_quality_gunc:
+        input:
+            "{smp}/Bins_quality/{smp}_bins_filtering.final",
+        output:
+            "{smp}/Bins_quality/{smp}_gunc.final",
+        conda:
+            config["conda_env"] + "GUNC.yaml"
+        params:
+            GUNC_DB=config["GUNC_db"],
+        shell:
+            """
             mv {wildcards.smp}/Bins_quality/MAGs_checkM {wildcards.smp}/Bins_quality/MAGs
             touch {wildcards.smp}/Bins_quality/{wildcards.smp}_gunc.final
-        fi
-        """
+            """
 
 
 rule classification:
@@ -440,10 +529,16 @@ rule classification:
         "{smp}/logs/classification.log",
     shell:
         """
-        (mkdir -p {wildcards.smp}/Classification/
-        export GTDBTK_DATA_PATH={params.GTDB}
-        gtdbtk classify_wf --cpus {threads} --pplacer_cpus {threads} --extension fa --genome_dir {wildcards.smp}/Bins_quality/MAGs --out_dir {wildcards.smp}/Classification/
-        touch {wildcards.smp}/Classification/{wildcards.smp}_classification.final) 2> {log}
+        (
+            mkdir -p {wildcards.smp}/Classification/
+            export GTDBTK_DATA_PATH={params.GTDB}
+            gtdbtk classify_wf \
+                --cpus {threads} --pplacer_cpus {threads} \
+                --extension fa \
+                --genome_dir {wildcards.smp}/Bins_quality/MAGs \
+                --out_dir {wildcards.smp}/Classification/
+            touch {output}
+        ) 2> {log}
         """
 
 
